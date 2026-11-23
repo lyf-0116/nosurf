@@ -21,6 +21,10 @@ const (
 
 	// Max-Age in seconds for the default base cookie. 365 days.
 	MaxAge = 365 * 24 * 60 * 60
+
+	// DefaultPath is the path the CSRF cookie is scoped to when the
+	// base cookie leaves the path unset (the zero value).
+	DefaultPath = "/"
 )
 
 var safeMethods = []string{"GET", "HEAD", "OPTIONS", "TRACE"}
@@ -261,14 +265,42 @@ func (h *CSRFHandler) RegenerateToken(w http.ResponseWriter, r *http.Request) st
 	return Token(r)
 }
 
-func (h *CSRFHandler) setTokenCookie(w http.ResponseWriter, r *http.Request, token []byte) {
-	// ctxSetToken() does the masking for us
-	ctxSetToken(r, token)
-
+// buildTokenCookie composes the final CSRF cookie out of three sources:
+// the secure defaults (the template), the base cookie explicitly set via
+// [CSRFHandler.SetBaseCookie] (which still replaces the whole template),
+// and the per-request transport state (whether the request is over TLS).
+//
+// Any field left at its zero value on the base cookie is filled with a
+// secure default before the cookie is written. The security-relevant
+// markers are then enforced regardless of the base cookie:
+// HttpOnly is always on, SameSite is at least SameSite=Lax,
+// and Secure follows the runtime TLS state.
+func (h *CSRFHandler) buildTokenCookie(r *http.Request, token []byte) http.Cookie {
 	cookie := h.baseCookie
 	cookie.Name = h.getCookieName()
 	cookie.Value = b64encode(token)
 
+	if cookie.Path == "" {
+		cookie.Path = DefaultPath
+	}
+	if cookie.MaxAge == 0 {
+		cookie.MaxAge = MaxAge
+	}
+	if cookie.SameSite == 0 {
+		cookie.SameSite = http.SameSiteLaxMode
+	}
+
+	cookie.HttpOnly = true
+	cookie.Secure = h.isTLS(r)
+
+	return cookie
+}
+
+func (h *CSRFHandler) setTokenCookie(w http.ResponseWriter, r *http.Request, token []byte) {
+	// ctxSetToken() does the masking for us
+	ctxSetToken(r, token)
+
+	cookie := h.buildTokenCookie(r, token)
 	http.SetCookie(w, &cookie)
 
 }
@@ -279,8 +311,15 @@ func (h *CSRFHandler) SetFailureHandler(handler http.Handler) {
 	h.failureHandler = handler
 }
 
-// Sets the base cookie to use when building a CSRF token cookie
-// This way you can specify the Domain, Path, HttpOnly, Secure, etc.
+// SetBaseCookie sets the base cookie to use when building a CSRF token
+// cookie. This way you can specify the Domain, Path, MaxAge, SameSite, etc.
+//
+// The given cookie replaces the previous base cookie entirely, but any field
+// left at its zero value is filled with a secure default when the CSRF
+// cookie is written (see [CSRFHandler.buildTokenCookie]). HttpOnly is always
+// enforced, the SameSite policy is at least http.SameSiteLaxMode, and the
+// Secure marker is derived from the per-request TLS state, so the values of
+// HttpOnly and Secure set here cannot weaken the resulting cookie.
 func (h *CSRFHandler) SetBaseCookie(cookie http.Cookie) {
 	h.baseCookie = cookie
 }

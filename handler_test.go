@@ -446,6 +446,100 @@ func TestCustomCookieName(t *testing.T) {
 	}
 }
 
+func readSetCookie(t *testing.T, hand *CSRFHandler, isTLS bool) *http.Cookie {
+	t.Helper()
+
+	hand.SetIsTLSFunc(func(_ *http.Request) bool { return isTLS })
+
+	writer := httptest.NewRecorder()
+	hand.ServeHTTP(writer, dummyGet())
+
+	resp := &http.Response{Header: writer.Header()}
+	cookies := resp.Cookies()
+	if len(cookies) != 1 {
+		t.Fatalf("Expected exactly one Set-Cookie, got %d", len(cookies))
+	}
+	return cookies[0]
+}
+
+// The final cookie must always carry safe defaults for its path,
+// HttpOnly, Secure and SameSite markers, even when the base cookie
+// is left completely at its zero values.
+func TestTokenCookieDefaultsAreSecure(t *testing.T) {
+	for _, isTLS := range []bool{false, true} {
+		hand := New(http.HandlerFunc(succHand))
+		cookie := readSetCookie(t, hand, isTLS)
+
+		if cookie.Name != CookieName {
+			t.Errorf("Expected cookie name %q, got %q", CookieName, cookie.Name)
+		}
+		if cookie.Path != DefaultPath {
+			t.Errorf("Expected default cookie path %q, got %q", DefaultPath, cookie.Path)
+		}
+		if cookie.MaxAge != MaxAge {
+			t.Errorf("Expected default MaxAge %d, got %d", MaxAge, cookie.MaxAge)
+		}
+		if !cookie.HttpOnly {
+			t.Error("The CSRF cookie must be HttpOnly")
+		}
+		if cookie.SameSite != http.SameSiteLaxMode {
+			t.Errorf("Expected default SameSite Lax, got %v", cookie.SameSite)
+		}
+		if cookie.Secure != isTLS {
+			t.Errorf("Expected Secure=%v from the TLS state, got %v", isTLS, cookie.Secure)
+		}
+	}
+}
+
+// Explicitly set base-cookie fields survive the whole-cookie replacement,
+// while the security markers keep being enforced.
+func TestTokenCookieMergesBaseCookie(t *testing.T) {
+	const customName = "my_custom_cookie"
+
+	hand := New(http.HandlerFunc(succHand))
+	hand.SetBaseCookie(http.Cookie{
+		Name:     customName,
+		Domain:   "example.com",
+		Path:     "/admin",
+		MaxAge:   60,
+		SameSite: http.SameSiteStrictMode,
+		// These attempt to weaken the cookie and must not take effect.
+		HttpOnly: false,
+		Secure:   false,
+	})
+
+	cookie := readSetCookie(t, hand, true)
+
+	if cookie.Name != customName {
+		t.Errorf("Expected custom cookie name %q, got %q", customName, cookie.Name)
+	}
+	if cookie.Domain != "example.com" {
+		t.Errorf("Expected explicit Domain to be kept, got %q", cookie.Domain)
+	}
+	if cookie.Path != "/admin" {
+		t.Errorf("Expected explicit Path to be kept, got %q", cookie.Path)
+	}
+	if cookie.MaxAge != 60 {
+		t.Errorf("Expected explicit MaxAge to be kept, got %d", cookie.MaxAge)
+	}
+	if cookie.SameSite != http.SameSiteStrictMode {
+		t.Errorf("Expected explicit SameSite Strict to be kept, got %v", cookie.SameSite)
+	}
+	if !cookie.HttpOnly {
+		t.Error("HttpOnly must be enforced even when the base cookie disables it")
+	}
+	if !cookie.Secure {
+		t.Error("Secure must follow the runtime TLS state instead of the base cookie")
+	}
+
+	// On a plain HTTP request the cookie stays usable, since Secure is
+	// derived from the transport rather than blindly enforced.
+	insecureCookie := readSetCookie(t, hand, false)
+	if insecureCookie.Secure {
+		t.Error("Secure must be false on a non-TLS request")
+	}
+}
+
 // For this and similar tests we start a test server
 // Since it's much easier to get the cookie
 // from a normal http.Response than from the recorder
