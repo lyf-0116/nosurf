@@ -1,6 +1,7 @@
 package nosurf
 
 import (
+	"bytes"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -603,5 +604,126 @@ func TestAddsVaryCookieHeader(t *testing.T) {
 
 	if !sContains(writer.Header()["Vary"], "Cookie") {
 		t.Errorf("CSRFHandler didn't add a `Vary: Cookie` header.")
+	}
+}
+
+// TestSingleSourceOfTruthOnFirstRequest verifies that on a request without a
+// cookie, the freshly generated real token is simultaneously mirrored into the
+// cookie and referenced (masked) in the context, so both describe the same
+// instance rather than two independently generated values.
+func TestSingleSourceOfTruthOnFirstRequest(t *testing.T) {
+	var seenRealToken []byte
+	var seenTemplateToken string
+	hand := New(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		seenRealToken = ctxRealToken(r)
+		seenTemplateToken = Token(r)
+	}))
+	writer := httptest.NewRecorder()
+	req := dummyGet()
+
+	hand.ServeHTTP(writer, req)
+
+	cookie := writer.Result().Cookies()
+	var realCookieToken []byte
+	for _, c := range cookie {
+		if c.Name == CookieName {
+			realCookieToken = b64decode(c.Value)
+		}
+	}
+	if realCookieToken == nil {
+		t.Fatal("CSRF cookie was not set on the first request.")
+	}
+
+	realContextToken := seenRealToken
+	if !bytes.Equal(realCookieToken, realContextToken) {
+		t.Errorf("Cookie token %v and context real token %v are not the same instance.",
+			realCookieToken, realContextToken)
+	}
+
+	// The template token must be a masked derivation of the same real token.
+	if !tokensEqual(realContextToken, unmaskToken(b64decode(seenTemplateToken))) {
+		t.Errorf("Template token is not derived from the context-held real token.")
+	}
+}
+
+// TestRegenerationKeepsSingleSourceOfTruth ensures that regenerating the token
+// replaces the source of truth in the context: the comparison always reads the
+// new value, never a stale local/cookie copy from before the regeneration.
+func TestRegenerationKeepsSingleSourceOfTruth(t *testing.T) {
+	var hand *CSRFHandler
+	var seenRealToken []byte
+	hand = New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hand.RegenerateToken(w, r)
+		seenRealToken = ctxRealToken(r)
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	writer := httptest.NewRecorder()
+	req := dummyGet()
+	hand.ServeHTTP(writer, req)
+
+	var cookieToken []byte
+	for _, c := range writer.Result().Cookies() {
+		if c.Name == CookieName {
+			cookieToken = b64decode(c.Value)
+		}
+	}
+	if cookieToken == nil {
+		t.Fatal("CSRF cookie was not set after regeneration.")
+	}
+
+	if !bytes.Equal(cookieToken, seenRealToken) {
+		t.Errorf("Regenerated cookie token does not match the context real token.")
+	}
+
+	sentToken := maskToken(seenRealToken)
+	if !verifyToken(seenRealToken, sentToken) {
+		t.Errorf("Token derived from the context real token should verify.")
+	}
+}
+
+// TestComparisonUsesContextTruthNotCookie drives a request with a valid cookie
+// and confirms the equality check reads the context-held real token (the same
+// value the template was rendered from), not a separately decoded cookie copy.
+func TestComparisonUsesContextTruthNotCookie(t *testing.T) {
+	hand := New(http.HandlerFunc(succHand))
+	hand.SetFailureHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("CSRF check failed unexpectedly: %v", Reason(r))
+	}))
+
+	server := httptest.NewServer(hand)
+	defer server.Close()
+
+	resp, err := http.Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := getRespCookie(resp, CookieName)
+	if cookie == nil {
+		t.Fatal("Cookie was not found in the response.")
+	}
+
+	// Render the form token from the same real token the context references.
+	formToken := b64encode(maskToken(b64decode(cookie.Value)))
+
+	req, err := http.NewRequest("POST", server.URL, formBodyR([][]string{
+		{"name", "Jolene"},
+		{FormFieldName, formToken},
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "example.com"
+	req.Header.Add("Referer", "https://example.com")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(cookie)
+
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("Request with a token derived from the single real token failed: %d",
+			resp.StatusCode)
 	}
 }

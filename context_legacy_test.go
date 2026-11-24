@@ -43,10 +43,16 @@ func TestSetsTokenCorrectly(t *testing.T) {
 	token := []byte("12345678901234567890123456789012")
 	ctxSetToken(req, token)
 
-	got := contextMap[req].token
+	got := contextMap[req].realToken
 
-	if !bytes.Equal(token, unmaskToken(b64decode(got))) {
-		t.Errorf("Token set incorrectly: expected %v, got %v", token, got)
+	if !bytes.Equal(token, got) {
+		t.Errorf("Real token stored incorrectly: expected %v, got %v", token, got)
+	}
+
+	// The exposed template token remains a masked derivation of the real one.
+	masked := unmaskToken(b64decode(contextMap[req].token))
+	if !bytes.Equal(token, masked) {
+		t.Errorf("Template token is not derived from the real token %v: %v", token, masked)
 	}
 }
 
@@ -60,6 +66,10 @@ func TestGetsTokenCorrectly(t *testing.T) {
 
 	intended := []byte("12345678901234567890123456789012")
 	ctxSetToken(req, intended)
+
+	if got := ctxRealToken(req); !bytes.Equal(intended, got) {
+		t.Errorf("Real token has been set to %v, but ctxRealToken() returns %v", intended, got)
+	}
 
 	token = Token(req)
 	decToken := unmaskToken(b64decode(token))

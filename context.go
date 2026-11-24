@@ -11,6 +11,9 @@ const (
 )
 
 type csrfContext struct {
+	// The unmasked "real" token. This is the single source of truth:
+	// the cookie mirrors it and the masked token below is derived from it.
+	realToken []byte
 	// The masked, base64 encoded token
 	// That's suitable for use in form fields, etc.
 	token string
@@ -48,16 +51,29 @@ func Reason(req *http.Request) error {
 func ctxClear(_ *http.Request) {
 }
 
-func ctxSetToken(req *http.Request, token []byte) {
-	ctx := req.Context().Value(nosurfKey).(*csrfContext)
-	ctx.token = b64encode(maskToken(token))
-}
-
 func ctxSetReason(req *http.Request, reason error) {
 	ctx := req.Context().Value(nosurfKey).(*csrfContext)
-	if ctx.token == "" {
+	if len(ctx.realToken) == 0 {
 		panic("Reason should never be set when there's no token in the context yet.")
 	}
 
 	ctx.reason = reason
+}
+
+// ctxRealToken returns the unmasked "real" token, the single source of
+// truth for all equality checks. It returns nil if no token has been set.
+func ctxRealToken(req *http.Request) []byte {
+	ctx, ok := req.Context().Value(nosurfKey).(*csrfContext)
+	if !ok {
+		return nil
+	}
+	return ctx.realToken
+}
+
+// ctxSetToken stores the unmasked real token as the source of truth and
+// derives the masked, base64-encoded token used in forms and headers.
+func ctxSetToken(req *http.Request, token []byte) {
+	ctx := req.Context().Value(nosurfKey).(*csrfContext)
+	ctx.realToken = token
+	ctx.token = b64encode(maskToken(token))
 }

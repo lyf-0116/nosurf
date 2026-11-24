@@ -125,11 +125,10 @@ func (h *CSRFHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer ctxClear(r)
 	w.Header().Add("Vary", "Cookie")
 
-	var realToken []byte
-
 	tokenCookie, err := r.Cookie(h.getCookieName())
+	var cookieToken []byte
 	if err == nil {
-		realToken = b64decode(tokenCookie.Value)
+		cookieToken = b64decode(tokenCookie.Value)
 	}
 
 	// If the length of the real token isn't what it should be,
@@ -140,10 +139,10 @@ func (h *CSRFHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	//
 	// As a consequence, CSRF check will fail when comparing the tokens later on,
 	// so we don't have to fail it just yet.
-	if len(realToken) != tokenLength {
+	if len(cookieToken) != tokenLength {
 		h.RegenerateToken(w, r)
 	} else {
-		ctxSetToken(r, realToken)
+		ctxSetToken(r, cookieToken)
 	}
 
 	if sContains(safeMethods, r.Method) || h.IsExempt(r) {
@@ -161,7 +160,9 @@ func (h *CSRFHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Finally, we check the token itself.
 	sentToken := extractToken(r)
 
-	if !verifyToken(realToken, sentToken) {
+	// The context-held real token is the single source of truth:
+	// the cookie is only a mirror of it, so every comparison reads it here.
+	if !verifyToken(ctxRealToken(r), sentToken) {
 		ctxSetReason(r, ErrBadToken)
 		h.handleFailure(w, r)
 		return
@@ -262,7 +263,8 @@ func (h *CSRFHandler) RegenerateToken(w http.ResponseWriter, r *http.Request) st
 }
 
 func (h *CSRFHandler) setTokenCookie(w http.ResponseWriter, r *http.Request, token []byte) {
-	// ctxSetToken() does the masking for us
+	// Store the real token as the single source of truth and derive the
+	// masked template token from it. The cookie below is only a mirror.
 	ctxSetToken(r, token)
 
 	cookie := h.baseCookie

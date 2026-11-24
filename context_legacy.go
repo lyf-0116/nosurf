@@ -12,6 +12,9 @@ import (
 // and not using gorilla's package just because.
 
 type csrfContext struct {
+	// The unmasked "real" token. This is the single source of truth:
+	// the cookie mirrors it and the masked token below is derived from it.
+	realToken []byte
 	// The masked, base64 encoded token
 	// That's suitable for use in form fields, etc.
 	token string
@@ -74,9 +77,24 @@ func ctxSetToken(req *http.Request, token []byte) *http.Request {
 		contextMap[req] = ctx
 	}
 
+	ctx.realToken = token
 	ctx.token = b64encode(maskToken(token))
 
 	return req
+}
+
+// ctxRealToken returns the unmasked "real" token, the single source of
+// truth for all equality checks. It returns nil if no token has been set.
+func ctxRealToken(req *http.Request) []byte {
+	cmMutex.RLock()
+	defer cmMutex.RUnlock()
+
+	ctx, ok := contextMap[req]
+	if !ok {
+		return nil
+	}
+
+	return ctx.realToken
 }
 
 func ctxSetReason(req *http.Request, reason error) *http.Request {
