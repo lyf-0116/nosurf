@@ -2,6 +2,7 @@ package nosurf
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"testing"
 )
@@ -231,5 +232,98 @@ func TestExemptFunc(t *testing.T) {
 	other, _ := http.NewRequest("POST", "/path", nil)
 	if hand.IsExempt(other) {
 		t.Errorf("%v is exempt, but it shouldn't be", other)
+	}
+}
+
+func TestAllExemptPathChecksUseNormalizedPath(t *testing.T) {
+	tests := []struct {
+		name   string
+		exempt func(*CSRFHandler)
+	}{
+		{
+			name: "exact",
+			exempt: func(h *CSRFHandler) {
+				h.ExemptPath("/admin")
+			},
+		},
+		{
+			name: "glob",
+			exempt: func(h *CSRFHandler) {
+				h.ExemptGlob("/admin*")
+			},
+		},
+		{
+			name: "regexp",
+			exempt: func(h *CSRFHandler) {
+				h.ExemptRegexp(`^/admin$`)
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			hand := New(nil)
+			tc.exempt(hand)
+
+			req := httptest.NewRequest("POST", "http://dummy.us/public/../admin", nil)
+			if !hand.IsExempt(req) {
+				t.Errorf("%v should be exempt after path normalization, but it isn't", req.URL.Path)
+			}
+		})
+	}
+}
+
+func TestExemptDirectoryPrefixCannotBeBypassedWithDotSegments(t *testing.T) {
+	tests := []struct {
+		name   string
+		exempt func(*CSRFHandler)
+	}{
+		{
+			name: "glob",
+			exempt: func(h *CSRFHandler) {
+				h.ExemptGlob("/public*")
+			},
+		},
+		{
+			name: "regexp",
+			exempt: func(h *CSRFHandler) {
+				h.ExemptRegexp(`^/public/`)
+			},
+		},
+	}
+
+	paths := []string{
+		"/public/../admin",
+		"/public/%2e%2e/admin",
+		"/public/%2E%2E/admin",
+		"/public//../admin",
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			hand := New(nil)
+			tc.exempt(hand)
+
+			for _, path := range paths {
+				req := httptest.NewRequest("POST", "http://dummy.us"+path, nil)
+				if hand.IsExempt(req) {
+					t.Errorf("%v normalized to %v should not be exempt", path, normalizeExemptPath(req.URL.Path))
+				}
+			}
+		})
+	}
+}
+
+func TestExemptPathTraversalDoesNotBypassCSRFCheck(t *testing.T) {
+	hand := New(http.HandlerFunc(succHand))
+	hand.ExemptRegexp(`^/public/`)
+
+	req := httptest.NewRequest("POST", "http://dummy.us/public/%2e%2e/admin", nil)
+	writer := httptest.NewRecorder()
+	hand.ServeHTTP(writer, req)
+
+	if writer.Code != FailureCode {
+		t.Errorf("A path traversal through an exempt prefix bypassed the CSRF check: expected status %d, got %d",
+			FailureCode, writer.Code)
 	}
 }

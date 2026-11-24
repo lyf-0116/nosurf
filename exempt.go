@@ -9,13 +9,14 @@ import (
 
 // Checks if the given request is exempt from CSRF checks.
 // It checks the ExemptFunc first, then the exact paths,
-// then the globs and finally the regexps.
+// then the globs and finally the regexps. All path-based
+// checks use the same normalized path.
 func (h *CSRFHandler) IsExempt(r *http.Request) bool {
 	if h.exemptFunc != nil && h.exemptFunc(r) {
 		return true
 	}
 
-	path := r.URL.Path
+	path := normalizeExemptPath(r.URL.Path)
 	if sContains(h.exemptPaths, path) {
 		return true
 	}
@@ -36,6 +37,23 @@ func (h *CSRFHandler) IsExempt(r *http.Request) bool {
 	}
 
 	return false
+}
+
+// normalizeExemptPath returns the single path representation shared by all
+// path-based exemption checks. net/http has already percent-decoded URL.Path,
+// so only dot segments and duplicate slashes need to be resolved here.
+func normalizeExemptPath(path string) string {
+	if path == "" {
+		return ""
+	}
+
+	hasTrailingSlash := len(path) > 1 && path[len(path)-1] == '/'
+	path = pathModule.Clean(path)
+	if hasTrailingSlash && path != "/" {
+		path += "/"
+	}
+
+	return path
 }
 
 // Exempts an exact path from CSRF checks

@@ -49,8 +49,8 @@ type CSRFHandler struct {
 	baseCookie http.Cookie
 
 	// Slices of paths that are exempt from CSRF checks.
-	// All of those will be matched against Request.URL.Path,
-	// So they should take the leading slash into account
+	// All of those will be matched against a normalized Request.URL.Path,
+	// so they should take the leading slash into account.
 	// Paths can be specified by...
 	// ...an exact path,
 	exemptPaths []string
