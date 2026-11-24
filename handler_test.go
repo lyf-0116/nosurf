@@ -30,9 +30,12 @@ func TestDefaultFailureHandler(t *testing.T) {
 
 func TestSafeMethodsPass(t *testing.T) {
 	handler := New(http.HandlerFunc(succHand))
+	// Methods are no longer inherently "safe":
+	// the endpoint must be explicitly exempted from CSRF checks.
+	handler.ExemptPath("/")
 
-	for _, method := range safeMethods {
-		req, err := http.NewRequest(method, "http://dummy.us", nil)
+	for _, method := range []string{"GET", "HEAD", "OPTIONS", "TRACE"} {
+		req, err := http.NewRequest(method, "http://dummy.us/", nil)
 
 		if err != nil {
 			t.Fatal(err)
@@ -46,6 +49,30 @@ func TestSafeMethodsPass(t *testing.T) {
 		if writer.Code != expected {
 			t.Errorf("A safe method didn't pass the CSRF check."+
 				"Expected HTTP status %d, got %d", expected, writer.Code)
+		}
+
+		writer.Flush()
+	}
+}
+
+func TestNonExemptedMethodsFail(t *testing.T) {
+	handler := New(http.HandlerFunc(succHand))
+
+	// Without an exemption, every method is subject to CSRF checks,
+	// including the ones historically considered "safe".
+	for _, method := range []string{"GET", "HEAD", "OPTIONS", "TRACE", "POST", "PUT", "DELETE"} {
+		req, err := http.NewRequest(method, "http://dummy.us/", nil)
+
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		writer := httptest.NewRecorder()
+		handler.ServeHTTP(writer, req)
+
+		if writer.Code != FailureCode {
+			t.Errorf("A non-exempted %s request passed the CSRF check."+
+				"Expected HTTP status %d, got %d", method, FailureCode, writer.Code)
 		}
 
 		writer.Flush()
@@ -144,7 +171,8 @@ func TestContextIsAccessible(t *testing.T) {
 
 	hand := New(http.HandlerFunc(succHand))
 
-	// we need a request that passes. Let's just use a safe method for that.
+	// we need a request that passes. Let's just exempt the path for that.
+	hand.ExemptPath("/")
 	req := dummyGet()
 	writer := httptest.NewRecorder()
 
@@ -297,6 +325,9 @@ func TestRefererHandling(t *testing.T) {
 			hand := New(http.HandlerFunc(succHand))
 			fhand := correctReason(t, tc.expectReason)
 			hand.SetFailureHandler(fhand)
+			// Exempt GETs so that the initial token-fetching request
+			// does not trip the CSRF checks being tested.
+			hand.ExemptFunc(func(r *http.Request) bool { return r.Method == http.MethodGet })
 			hand.SetIsTLSFunc(func(_ *http.Request) bool { return tc.isTLS })
 			origins, err := StaticOrigins(allowedOrigins...)
 			if err != nil {
@@ -454,6 +485,8 @@ func TestCorrectTokenPasses(t *testing.T) {
 	hand.SetFailureHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Errorf("Test failed. Reason: %v", Reason(r))
 	}))
+	// Exempt GETs so that the initial token-fetching request passes.
+	hand.ExemptFunc(func(r *http.Request) bool { return r.Method == http.MethodGet })
 
 	server := httptest.NewServer(hand)
 	defer server.Close()
@@ -552,6 +585,8 @@ func TestPrefersHeaderOverFormValue(t *testing.T) {
 	// it will mean that it prefered the header.
 
 	hand := New(http.HandlerFunc(succHand))
+	// Exempt GETs so that the initial token-fetching request passes.
+	hand.ExemptFunc(func(r *http.Request) bool { return r.Method == http.MethodGet })
 
 	server := httptest.NewServer(hand)
 	defer server.Close()

@@ -23,8 +23,6 @@ const (
 	MaxAge = 365 * 24 * 60 * 60
 )
 
-var safeMethods = []string{"GET", "HEAD", "OPTIONS", "TRACE"}
-
 // reasons for CSRF check failures
 var (
 	ErrNoReferer  = errors.New("A secure request contained no Referer or its value was malformed")
@@ -146,8 +144,8 @@ func (h *CSRFHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ctxSetToken(r, realToken)
 	}
 
-	if sContains(safeMethods, r.Method) || h.IsExempt(r) {
-		// short-circuit with a success for safe methods
+	if h.IsExempt(r) {
+		// short-circuit with a success for exempt endpoints
 		h.handleSuccess(w, r)
 		return
 	}

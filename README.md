@@ -16,7 +16,8 @@ nor should they.
 
 `nosurf` solves this problem by providing a `CSRFHandler`
 that wraps your `http.Handler` and checks for CSRF attacks
-on every non-safe (non-GET/HEAD/OPTIONS/TRACE) method.
+on every request, unless the endpoint has been explicitly
+exempted via one of the `Exempt*` methods.
 
 `nosurf` requires Go 1.1 or later.
 
@@ -24,8 +25,9 @@ on every non-safe (non-GET/HEAD/OPTIONS/TRACE) method.
 
 * Supports any `http.Handler` (frameworks, your own handlers, etc.)
 and acts like one itself.
-* Allows exempting specific endpoints from CSRF checks by
-an exact URL, a glob, or a regular expression.
+* Requires exempting endpoints that should not undergo CSRF checks
+(e.g. read-only endpoints) by an exact URL, a glob,
+a regular expression, or a custom function.
 * Allows specifying your own failure handler. 
 Want to present the hacker with an ASCII middle finger
 instead of the plain old `HTTP 400`? No problem.

@@ -25,7 +25,8 @@ func TestContextIsAccessibleWithContext(t *testing.T) {
 
 	hand := New(http.HandlerFunc(succHand))
 
-	// we need a request that passes. Let's just use a safe method for that.
+	// we need a request that passes. Let's just exempt the path for that.
+	hand.ExemptPath("/")
 	req := dummyGet()
 	writer := httptest.NewRecorder()
 
