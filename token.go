@@ -62,31 +62,35 @@ func VerifyToken(realToken, sentToken string) bool {
 	if err != nil {
 		return false
 	}
-	if len(r) == 2*tokenLength {
-		r = unmaskToken(r)
-	}
 	s, err := base64.StdEncoding.DecodeString(sentToken)
 	if err != nil {
 		return false
 	}
-	if len(s) == 2*tokenLength {
-		s = unmaskToken(s)
+	if !validTokenLength(r) || !validTokenLength(s) {
+		return false
 	}
-	return tokensEqual(r, s)
+	return verifyToken(r, s)
 }
 
-// verifyToken expects the realToken to be unmasked and the sentToken to be masked
+// verifyToken accepts both unmasked tokens of tokenLength bytes and
+// masked tokens of 2*tokenLength bytes.
 func verifyToken(realToken, sentToken []byte) bool {
-	realN := len(realToken)
-	sentN := len(sentToken)
-
-	// sentN == tokenLength means the token is unmasked
-	// sentN == 2*tokenLength means the token is masked.
-
-	if realN == tokenLength && sentN == 2*tokenLength {
-		return tokensEqual(realToken, unmaskToken(sentToken))
+	if !validTokenLength(realToken) || !validTokenLength(sentToken) {
+		return false
 	}
-	return false
+
+	return tokensEqual(normalizeToken(realToken), normalizeToken(sentToken))
+}
+
+func validTokenLength(token []byte) bool {
+	return len(token) == tokenLength || len(token) == 2*tokenLength
+}
+
+func normalizeToken(token []byte) []byte {
+	if len(token) == 2*tokenLength {
+		return unmaskToken(token)
+	}
+	return token
 }
 
 // tokensEqual expects both tokens to be unmasked

@@ -138,8 +138,8 @@ func (h *CSRFHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// or it hasn't ever been set so far.
 	// In any case of those, we should regenerate it.
 	//
-	// As a consequence, CSRF check will fail when comparing the tokens later on,
-	// so we don't have to fail it just yet.
+	// The later token comparison applies the shared token length rules,
+	// so the request does not need to be failed here.
 	if len(realToken) != tokenLength {
 		h.RegenerateToken(w, r)
 	} else {

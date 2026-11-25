@@ -43,8 +43,9 @@ func TestVerifyTokenChecksLengthCorrectly(t *testing.T) {
 	for i := 0; i < 64; i++ {
 		slice := make([]byte, i)
 		result := verifyToken(slice, slice)
-		if result {
-			t.Errorf("VerifyToken should've returned false with slices of length %d", i)
+		expected := i == tokenLength
+		if result != expected {
+			t.Errorf("verifyToken should've returned %v with equal slices of length %d", expected, i)
 		}
 	}
 
@@ -52,6 +53,21 @@ func TestVerifyTokenChecksLengthCorrectly(t *testing.T) {
 	result := verifyToken(slice[:32], slice)
 	if !result {
 		t.Errorf("VerifyToken should've returned true on a zeroed slice of length 64")
+	}
+}
+
+func TestValidTokenLength(t *testing.T) {
+	if !validTokenLength(make([]byte, tokenLength)) {
+		t.Errorf("validTokenLength rejected an unmasked token")
+	}
+	if !validTokenLength(make([]byte, 2*tokenLength)) {
+		t.Errorf("validTokenLength rejected a masked token")
+	}
+
+	for _, length := range []int{0, tokenLength - 1, tokenLength + 1, 2*tokenLength - 1, 2*tokenLength + 1} {
+		if validTokenLength(make([]byte, length)) {
+			t.Errorf("validTokenLength accepted a token with length %d", length)
+		}
 	}
 }
 

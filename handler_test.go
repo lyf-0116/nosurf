@@ -544,6 +544,34 @@ func TestCorrectTokenPasses(t *testing.T) {
 	}
 }
 
+func TestUnmaskedTokenPasses(t *testing.T) {
+	realToken := generateToken()
+	hand := New(http.HandlerFunc(succHand))
+	hand.SetFailureHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("The unmasked token should have passed, but the check failed. Reason: %v", Reason(r))
+		w.WriteHeader(FailureCode)
+	}))
+
+	req, err := http.NewRequest(http.MethodPost, "https://example.com/", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Host = "example.com"
+	req.Header.Set("Referer", "https://example.com/")
+	req.Header.Set(HeaderName, b64encode(realToken))
+	req.AddCookie(&http.Cookie{
+		Name:  CookieName,
+		Value: b64encode(realToken),
+	})
+
+	writer := httptest.NewRecorder()
+	hand.ServeHTTP(writer, req)
+
+	if writer.Code != http.StatusOK {
+		t.Errorf("Expected unmasked token request to succeed, got status %d", writer.Code)
+	}
+}
+
 func TestPrefersHeaderOverFormValue(t *testing.T) {
 	// Let's do a nice trick to find out this:
 	// We'll set the correct token in the header
